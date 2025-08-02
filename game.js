@@ -37,10 +37,13 @@ function create() {
   this.player = player;
   player.damaged = false;
   player.setScale(0.03).setDepth(0);
-  player.health = 100;
+  player.body.setSize(player.width, player.height / 3)
+           .setOffset(0, player.height * 2/3);
 
-  this.healthText = this.add.text(10, 10, 'Health: 0', { fontSize: '20px', fill: '#000' });
-  this.healthText.setScrollFactor(0);
+  player.health = 10;
+
+  this.healthText = this.add.text(10, 10, 'Health: 0', { fontSize: '20px', fill: '#000' }).setScrollFactor(0);
+  this.daysText = this.add.text(650, 10, 'Day: 1', { fontSize: '20px', fill: '#000' }).setScrollFactor(0).setDepth(100000000);
 
 
   this.smoke = new SmokeEffect(this);
@@ -57,17 +60,39 @@ function create() {
     up: 'W', down: 'S', left: 'A', right: 'D'
   });
 
+  this.houseGroup = this.physics.add.staticGroup();
   wolfManager = new WolfManager(this, player);
 
-  this.houseGroup = this.physics.add.staticGroup();
 
   houses.length = 0;
   // Generate houses randomly
-  for (let i = 0; i < 50; i++) {
-    let x = Phaser.Math.Between(-10, 10);
-    let y = Phaser.Math.Between(-10, 10);
+  for (let i = 0; i < 200; i++) {
+    generateHouse(this);
+}
 
-    const house = this.physics.add.staticImage(x* 100, y* 70, 'house');
+  shadowGraphics = this.add.graphics();
+  shadowGraphics.setDepth(-100000000000); // Behind everything
+
+  this.shadowGraphics = shadowGraphics;
+  this.shadowAngle = shadowAngle;
+  this.houses = houses;
+  this.cursors = cursors;
+  this.dayCount = 1;
+
+
+  this.physics.add.collider(this.player, this.houseGroup);
+
+}
+
+function generateHouse(scene){
+  let x = Phaser.Math.Between(-15, 15) * 100;
+    let y = Phaser.Math.Between(-15, 15) * 70;
+
+
+
+    if ((x > 300 && x < 500) && (y > 200 && y < 400)) return; // no houses render on the players spawn point
+
+    const house = scene.physics.add.staticImage(x, y, 'house');
     house.setScale(0.5);
     house.refreshBody(); // important for static bodies
     const colliderW = house.displayWidth * 0.7;
@@ -78,7 +103,11 @@ function create() {
 
     house.body.setSize(colliderW, colliderH).setOffset(offsetX, offsetY);
 
-    this.houseGroup.add(house);
+    if (Phaser.Math.Between(0, 20) == 0){
+      house.shop = true;
+      house.setTint(0x0000ff);
+    }
+    scene.houseGroup.add(house);
 
     const w = house.displayWidth / 2;
     const h = house.displayHeight / 2;
@@ -98,19 +127,6 @@ function create() {
     houses.push({ house, polygon });
 }
 
-  shadowGraphics = this.add.graphics();
-  shadowGraphics.setDepth(-1); // Behind everything
-
-  this.shadowGraphics = shadowGraphics;
-  this.shadowAngle = shadowAngle;
-  this.houses = houses;
-  this.cursors = cursors;
-
-
-  this.physics.add.collider(this.player, this.houseGroup);
-
-}
-
 let clearingShadow = false;
 
 ///////////////////////// UPDATE ///////////////////////////
@@ -128,6 +144,16 @@ function update(time, delta) {
 
   if (cursors.up.isDown) body.setVelocityY(-speed);
   else if (cursors.down.isDown) body.setVelocityY(speed);
+
+  // call once in create to ensure depth sorting is allowed
+  this.player.setDepth(0);
+
+  // in update():
+  const sortDepth = obj => obj.setDepth(obj.y + (obj.displayHeight || 0) / 2);
+
+  sortDepth(this.player);
+  this.houseGroup.getChildren().forEach(house => sortDepth(house));
+  this.wolfManager.wolves.getChildren().forEach(sortDepth);
 
   // Advance time
   this.shadowAngle += daySpeed * delta;
@@ -186,7 +212,12 @@ function update(time, delta) {
   this.currentShadowLength = shadowLength;
 
   if (this.shadowAngle > 0) { // Daytime only
-    if (nightCalled) nightCalled = false;
+    if (nightCalled){
+      nightCalled = false;
+      this.dayCount += 1;
+      this.daysText.setText("Day: " + this.dayCount);
+    }
+
 
     // gather all relevant entities: player + wolves
     const wolfArray = wolfManager.wolves.getChildren(); // array of wolf sprites
@@ -213,7 +244,7 @@ function update(time, delta) {
     }
   } else { // NIGHT
     if (!nightCalled) {
-      wolfManager.spawnWolves(20);
+      wolfManager.spawnWolves(10 + 10 * this.dayCount);
       nightCalled = true;
     }
     // At night, everything is considered in shadow: reset their flags and skip sun damage
@@ -307,10 +338,10 @@ function applySunAndSmokeEffects(scene, ent, delta, isPlayer = false) {
       ent.health -= 1;
         flashRed(ent, scene, 500);
         ent._smokeCooldown = 0; // optional for player
-      ent._sunDamageCooldown = 1000; // ms
+      ent._sunDamageCooldown = 500; // ms
     }
   } else {
-    ent._sunDamageCooldown = 1000; // reset while safe
+    ent._sunDamageCooldown = 500; // reset while safe
   }
 
   // Tinting or other visual for shadow status
@@ -385,7 +416,7 @@ function showYouDiedScreen(scene) {
     scene.cameras.main.height,
     0x000000,
     0.6
-  ).setScrollFactor(0);
+  ).setScrollFactor(0).setDepth(1000000000000);
 
   // "You Died" text
   const gameOverText = scene.add.text(
@@ -393,7 +424,7 @@ function showYouDiedScreen(scene) {
     scene.cameras.main.centerY - 50,
     'YOU DIED',
     { fontSize: '64px', fill: '#ff5555', fontFamily: 'Arial', stroke: '#000', strokeThickness: 6 }
-  ).setOrigin(0.5).setScrollFactor(0);
+  ).setOrigin(0.5).setScrollFactor(0).setDepth(1000000000000000);
 
   // Restart button
   const restartBtn = scene.add.text(
@@ -405,6 +436,7 @@ function showYouDiedScreen(scene) {
     .setOrigin(0.5)
     .setInteractive({ useHandCursor: true })
     .setScrollFactor(0)
+    .setDepth(1000000000000000)
     .on('pointerover', () => restartBtn.setStyle({ fill: '#ff0' }))
     .on('pointerout', () => restartBtn.setStyle({ fill: '#fff' }))
     .on('pointerdown', () => {

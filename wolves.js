@@ -3,6 +3,17 @@ export class WolfManager {
     this.scene = scene;
     this.player = player;
     this.wolves = scene.physics.add.group();
+    this.scene.physics.add.collider(player, this.wolves, (player, wolf) => {
+      if (!player.damaged) {
+        player.damaged = true;
+        player.health =- 1;
+        console.log("Player hit by enemy!");
+      }
+    });
+
+    this.scene.physics.add.collider(this.wolves, scene.houseGroup);
+    this.scene.physics.add.collider(this.wolves, this.wolves);
+
     scene.wolfManager = this; // <--- so later you can do scene.wolfManager.wolves
   }
 
