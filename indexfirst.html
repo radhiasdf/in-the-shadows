@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Snowman Shadow Runner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    canvas { display: block; background: #d0f0ff; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const TILE_SIZE = 100;
+    const SHADOW_COLOR = 'rgba(0,0,0,0.3)';
+
+    let player = { x: 100, y: canvas.height / 2, width: 40, height: 60, speed: 3 };
+    let buildings = [];
+    let time = 0;
+    let sunAngle = 0;
+    let dayLength = 20000; // ms per full day cycle
+    let gameSpeed = 2;
+    let distance = 0;
+
+    const assets = {};
+    const assetNames = ['snowman.jpeg', 'house.jpg'];
+    let lastSpawnX = 0;
+
+    function loadAssets(callback) {
+      let loaded = 0;
+      assetNames.forEach(name => {
+        const img = new Image();
+        img.src = `${name}`;
+        img.onload = () => {
+          assets[name] = img;
+          loaded++;
+          if (loaded === assetNames.length) callback();
+        };
+      });
+    }
+
+    function spawnBuilding(x) {
+      const types = ['house', 'tree', 'rock'];
+      const type = types[Math.floor(Math.random() * types.length)];
+      buildings.push({
+        type,
+        x,
+        y: canvas.height - TILE_SIZE - Math.random() * 100,
+        width: TILE_SIZE,
+        height: TILE_SIZE + Math.random() * 50,
+      });
+    }
+
+    function updateSunPosition(deltaTime) {
+      time += deltaTime;
+      sunAngle = (time % dayLength) / dayLength * Math.PI * 2;
+    }
+
+    function getShadowLength(height) {
+      const sunY = Math.sin(sunAngle);
+      return sunY > 0.1 ? height / sunY : 10000;
+    }
+
+    function drawShadow(obj) {
+      const angle = sunAngle;
+      const length = getShadowLength(obj.height);
+      const dx = Math.cos(angle) * length;
+      const dy = Math.sin(angle) * length;
+      ctx.fillStyle = SHADOW_COLOR;
+      ctx.beginPath();
+      ctx.moveTo(obj.x, obj.y);
+      ctx.lineTo(obj.x + dx, obj.y + dy);
+      ctx.lineTo(obj.x + obj.width + dx, obj.y + dy);
+      ctx.lineTo(obj.x + obj.width, obj.y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function isInShadow(px, py) {
+      for (let b of buildings) {
+        const angle = sunAngle;
+        const length = getShadowLength(b.height);
+        const dx = Math.cos(angle) * length;
+        const dy = Math.sin(angle) * length;
+        const sx = b.x + dx;
+        const sy = b.y + dy;
+        if (
+          px >= Math.min(b.x, sx) && px <= Math.max(b.x + b.width, sx + b.width) &&
+          py >= Math.min(b.y, sy) && py <= Math.max(b.y + b.height, sy + b.height)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function update(deltaTime) {
+      player.x += player.speed;
+      distance += player.speed;
+
+      // speed up the day cycle gradually
+      if (distance % 2000 < player.speed) dayLength = Math.max(5000, dayLength * 0.95);
+
+      // spawn
+      if (player.x + canvas.width > lastSpawnX) {
+        for (let i = 0; i < 5; i++) {
+          spawnBuilding(lastSpawnX + i * TILE_SIZE + Math.random() * 100);
+        }
+        lastSpawnX += 500;
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Background
+      ctx.fillStyle = '#eef';
+      ctx.fillRect(0, canvas.height - TILE_SIZE, canvas.width, TILE_SIZE);
+
+      for (let b of buildings) {
+        b.x -= gameSpeed;
+        drawShadow(b);
+          if (assets[b.type]) {
+              ctx.drawImage(assets[b.type], b.x, b.y, b.width, b.height);
+          }
+      }
+
+      // Player
+      const safe = isInShadow(player.x + player.width / 2, player.y + player.height);
+      ctx.globalAlpha = safe ? 1 : 0.6;
+        if (assets.snowman) {
+            ctx.drawImage(assets.snowman, player.x, player.y, player.width, player.height);
+        }
+      ctx.globalAlpha = 1;
+
+      // HUD
+      ctx.fillStyle = '#000';
+      ctx.fillText(`Distance: ${Math.floor(distance)} m`, 20, 20);
+      ctx.fillText(`Day Length: ${(dayLength / 1000).toFixed(1)}s`, 20, 40);
+    }
+
+    let last = 0;
+    function gameLoop(timestamp) {
+      if (!last) last = timestamp;
+      const delta = timestamp - last;
+      last = timestamp;
+      updateSunPosition(delta);
+      update(delta);
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    loadAssets(() => requestAnimationFrame(gameLoop));
+  </script>
+</body>
+</html>
