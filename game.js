@@ -2,6 +2,7 @@ import {lerpColor} from './lerp.js';
 import { WolfManager } from './wolves.js';
 import { SmokeEffect } from './vaporize.js';
 import {flashRed} from './flashRed.js';
+import { updateInventoryDisplay, placeItem, getNearestItemWithin, refreshSelectionHighlight } from './inventory.js';
 let wolfManager;
 
 const config = {
@@ -24,25 +25,42 @@ let daySpeed = 0.0005;
 let nightCalled = false;
 
 function preload() {
-  this.load.image('player', 'snowman.webp');
+  this.load.image('vampire1', 'vampire/vampire1.png');
+  this.load.image('vampire2', 'vampire/vampire2.png');
   this.load.image('house', 'house.png');
   this.load.image('wolf', 'zombie.png');
+  this.load.image('cactus', 'cactus.png');
+  this.load.image('coleus', 'coleus.png');
+  this.load.image('bloomroot', 'bloomroot.png');
+
 }
 
 function create() {
+  const scene = this;
   this.cameras.main.setBackgroundColor('#7fb85c');
 
   // Player
-  player = this.physics.add.image(400, 300, 'player');
+  this.anims.create({
+  key: 'walk',
+  frames: [
+    { key: 'vampire1' },
+    { key: 'vampire2' },
+  ],
+  frameRate: 10,
+  repeat: -1
+});
+  player = this.physics.add.sprite(400, 300, 'vampire1');
+  player.anims.play('walk');
   this.player = player;
   player.damaged = false;
-  player.setScale(0.03).setDepth(0);
+  player.setScale(0.1).setDepth(0);
   player.body.setSize(player.width, player.height / 3)
            .setOffset(0, player.height * 2/3);
 
+  // Health and damage stuff
   player.health = 10;
 
-  this.healthText = this.add.text(10, 10, 'Health: 0', { fontSize: '20px', fill: '#000' }).setScrollFactor(0);
+  this.healthText = this.add.text(10, 10, 'Health: 0', { fontSize: '20px', fill: '#000' }).setScrollFactor(0).setDepth(100000000);
   this.daysText = this.add.text(650, 10, 'Day: 1', { fontSize: '20px', fill: '#000' }).setScrollFactor(0).setDepth(100000000);
 
 
@@ -57,9 +75,17 @@ function create() {
 
   // Controls
   cursors = this.input.keyboard.addKeys({
-    up: 'W', down: 'S', left: 'A', right: 'D'
+    up: 'W', 
+    down: 'S', 
+    left: 'A', 
+    right: 'D',
+    q: 'Q',
+    e: 'E',
+    next: 'RIGHT',
+    prev: 'LEFT'
   });
 
+  // Houses and other buildings and trees and rocks
   this.houseGroup = this.physics.add.staticGroup();
   wolfManager = new WolfManager(this, player);
 
@@ -81,6 +107,47 @@ function create() {
 
 
   this.physics.add.collider(this.player, this.houseGroup);
+
+  // Inventory
+
+  scene.inventory = {
+    cactus: 5,
+    bloomroot: 10,
+    coleus: 5
+  };
+
+  scene.itemKeys = Object.keys(scene.inventory);
+    scene.selectedIndex = 0;
+
+
+  scene.placedItems = scene.physics.add.group();
+
+  scene.invContainer = scene.add.container(10, 10);
+  scene.invEntryContainers = []; // to keep references for selection highlight
+
+  // Inventory display text
+  scene.invText = scene.add.text(10, 10, '', {
+    font: '20px Arial',
+    fill: '#ffffff',
+    stroke: '#000000',
+    strokeThickness: 4
+  });
+  updateInventoryDisplay(scene);
+
+  // Highlight marker (a stroked circle around the closest item)
+  scene.highlight = scene.add.circle(0, 0, 22);
+  scene.highlight.setStrokeStyle(3, 0xffff00);
+  scene.highlight.setVisible(false);
+
+  // Overlap detection zone (used for proximity, not physics collision)
+  scene.pickupRadius = 50;
+
+  // Message for user
+  scene.infoText = scene.add.text(570, 570, 'Q: place object | E: pick up', {
+    font: '16px Arial',
+    fill: '#cccccc',
+    stroke: '#000000'
+  }).setScrollFactor(0).setDepth(100000000);
 
 }
 
@@ -132,18 +199,44 @@ let clearingShadow = false;
 ///////////////////////// UPDATE ///////////////////////////
 
 function update(time, delta) {
+  const scene = this;
 
-  if(this.gameOver) return;
+  if(this.gameOver) return; /////// ANYTHING AFTER IS IN GAME LOOP
 
   const speed = 200;
   const body = player.body;
+  let moving = false;
 
-  body.setVelocity(0);
-  if (cursors.left.isDown) body.setVelocityX(-speed);
-  else if (cursors.right.isDown) body.setVelocityX(speed);
+  if (cursors.left.isDown) {
+    player.setVelocityX(-speed);
+    moving = true;
+    player.flipX = false; // face left if needed
+  } else if (cursors.right.isDown) {
+    player.setVelocityX(speed);
+    moving = true;
+    player.flipX = true;
+  } else {
+    player.setVelocityX(0);
+  }
 
-  if (cursors.up.isDown) body.setVelocityY(-speed);
-  else if (cursors.down.isDown) body.setVelocityY(speed);
+  if (cursors.up.isDown) {
+    player.setVelocityY(-speed);
+    moving = true;
+  } else if (cursors.down.isDown) {
+    player.setVelocityY(speed);
+    moving = true;
+  } else {
+    player.setVelocityY(0);
+  }
+
+  if (moving) {
+    if (!player.anims.isPlaying || player.anims.getName() !== 'walk') {
+      player.anims.play('walk', true);
+    }
+  } else {
+    player.anims.stop();
+    player.setTexture('vampire1'); // idle frame
+  }
 
   // call once in create to ensure depth sorting is allowed
   this.player.setDepth(0);
@@ -154,6 +247,7 @@ function update(time, delta) {
   sortDepth(this.player);
   this.houseGroup.getChildren().forEach(house => sortDepth(house));
   this.wolfManager.wolves.getChildren().forEach(sortDepth);
+  this.placedItems.getChildren().forEach(sortDepth);
 
   // Advance time
   this.shadowAngle += daySpeed * delta;
@@ -254,6 +348,46 @@ function update(time, delta) {
   }
 
   wolfManager.update();
+
+  ///////// ITEMS DROP AND PICKUP ///////////////////////////
+
+  if (Phaser.Input.Keyboard.JustDown(scene.cursors.next)) {
+    scene.selectedIndex = (scene.selectedIndex + 1) % scene.itemKeys.length;
+    refreshSelectionHighlight(scene);
+  }
+  if (Phaser.Input.Keyboard.JustDown(scene.cursors.prev)) {
+    scene.selectedIndex =
+      (scene.selectedIndex - 1 + scene.itemKeys.length) % scene.itemKeys.length;
+    refreshSelectionHighlight(scene);
+  }
+
+  // Place selected item with Q
+  if (Phaser.Input.Keyboard.JustDown(scene.cursors.q)) {
+    const key = scene.itemKeys[scene.selectedIndex];
+    if (scene.inventory[key] > 0) {
+      placeItem(scene, key, 300, 400);
+      scene.inventory[key] -= 1;
+      updateInventoryDisplay(scene);
+    }
+  }
+
+  // Highlight nearest within pickupRadius
+  const nearest = getNearestItemWithin(scene, scene.pickupRadius);
+  if (nearest) {
+    scene.highlight.setPosition(nearest.x, nearest.y);
+    scene.highlight.setVisible(true);
+  } else {
+    scene.highlight.setVisible(false);
+  }
+
+  // Pick up with E
+  if (Phaser.Input.Keyboard.JustDown(scene.cursors.e) && nearest) {
+    // remove the item
+    nearest.destroy();
+    scene.inventory.cactus += 1;
+    updateInventoryDisplay(scene);
+    scene.highlight.setVisible(false);
+  }
 }
 
 function updateShadowsForEntities(scene, entities) {
@@ -445,3 +579,4 @@ function showYouDiedScreen(scene) {
       scene.input.keyboard.enabled = true;
     });
 }
+
