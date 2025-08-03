@@ -5,6 +5,7 @@ import {flashRed} from './flashRed.js';
 import { updateInventoryDisplay, placeItem, getNearestItemWithin, refreshSelectionHighlight, createPlacementHint, updatePlacementHint, refreshItemKeys} from './inventory.js';
 import * as plantManager from './plants.js';
 import { SpatialHash } from './spatialHashShadows.js';
+import { bounce } from './bounce.js';
 
 let wolfManager;
 
@@ -40,20 +41,57 @@ function preload() {
   this.load.image('house', 'house.png');
   this.load.image('wolf', 'zombie.png');
   this.load.image('cactus', 'cactus.png');
-  this.load.image('coleus', 'coleus.png');
+  this.load.image('fern', 'fern.png');
   this.load.image('bloomroot', 'bloomroot.png');
   this.load.image('gem', 'gem.png');
   this.load.image('begonia', 'begonia.webp');
-  this.load.image('greenseed', 'greenseed.webp'); // coleus
+  this.load.image('greenseed', 'greenseed.webp'); // fern
 this.load.image('blueseed', 'blueseed.webp');     // cactus
 this.load.image('pinkseed', 'pinkseed.png');   // begonia
 this.load.image('yellowseed', 'yellowseed.webp'); // bloomroot
+
+this.load.audio('chirping', 'assets/chirping.mp3');
+this.load.audio('nightcricket', 'assets/nightcricket.mp3');
+this.load.audio('pop', 'assets/pop.mp3');
+this.load.audio('place', 'assets/place.mp3');
+this.load.audio('pickup', 'assets/pickup.mp3');
+
 
   
 
 }
 
 function create() {
+
+  this.dayTrack = this.sound.add('chirping', {
+  loop: true, // loop automatically
+  volume: 0   // start muted
+});
+this.nightTrack = this.sound.add('nightcricket', {
+  loop: true,
+  volume: 0
+});
+
+this.dayTrack.play();
+this.nightTrack.play();
+
+this.isDay = null; // so first update triggers the fade
+
+this.dayTrack.on('complete', () => {
+    if (this.isDay) {
+        this.dayTrack.setSeek(0); // rewind
+        this.tweens.add({ targets: this.dayTrack, volume: 1, duration: 1000 });
+    }
+});
+this.popSound = this.sound.add('pop', { volume: 0.7 });
+this.placeSound = this.sound.add('place', { volume: 0.7 });
+this.pickupSound = this.sound.add('pickup', { volume: 0.7 });
+
+
+this.defaultTextStyle = {
+  fontFamily: 'VT323, monospace'
+};
+
   const scene = this;
   this.cameras.main.setBackgroundColor('#7fb85c');
 
@@ -78,7 +116,7 @@ function create() {
   // Health and damage stuff
   player.health = 1000;
 
-  this.healthText = this.add.text(10, 10, 'Health: 0', { fontSize: '20px', fill: '#000' }).setScrollFactor(0).setDepth(100000000);
+  this.healthText = this.add.text(10, 10, '', { fontSize: '20px', fill: '#000' }).setScrollFactor(0).setDepth(100000000);
   this.daysText = this.add.text(650, 10, 'Day: 1', { fontSize: '20px', fill: '#000' }).setScrollFactor(0).setDepth(100000000);
 
 
@@ -141,11 +179,9 @@ function create() {
   // Inventory
 
   scene.inventory = {
-    cactus: 2,
-    bloomroot: 2,
-    coleus: 2,
-    begonia: 2,
-    yellowseed: 2
+    cactus: 3,
+    bloomroot: 3,
+    begonia: 3
   };
   scene.inventory.gem = scene.inventory.gem || 0; // collectible from fruiting
   scene.inventory.gem = scene.inventory.gem || 0;
@@ -191,7 +227,7 @@ function generateHouse(scene, x, y){
     if ((x > 300 && x < 500) && (y > 200 && y < 400)) return; // no houses render on the players spawn point
 
     const house = scene.physics.add.staticImage(x, y, 'house');
-    house.setScale(0.5);
+    house.setScale(0.05);
     house.refreshBody(); // important for static bodies
     const colliderW = house.displayWidth * 0.7;
     const colliderH = house.displayHeight * 0.5;
@@ -222,65 +258,13 @@ function generateHouse(scene, x, y){
     { x: -w * 0.8, y: -h * 0.2 },   // top-left roof slope
     { x:  0,       y: -h * 0.5 },  // roof center peak
     { x:  w * 0.8, y: -h * 0.2 },   // top-right roof slope
-    { x:  w * 0.6, y: -h * 0.2 },   // lower-right wall
-    { x:  w * 0.6, y:  h * 0.9 },   // bottom-right step
-    { x: -w * 0.6, y:  h * 0.9 },   // bottom-left step
-    { x: -w * 0.6, y: -h * 0.2 },   // lower-left wall
+    { x:  w * 0.7, y: -h * 0.2 },   // lower-right wall
+    { x:  w * 0.7, y:  h * 0.85 },   // bottom-right step
+    { x: -w * 0.7, y:  h * 0.85 },   // bottom-left step
+    { x: -w * 0.7, y: -h * 0.2 },   // lower-left wall
   ];
 
     houses.push({ house, polygon });
-}
-
-function startHouseRequest(scene, house) {
-  // pick a random plant type to request
-  const plantTypes = Object.keys(SEED_TYPES);
-  const chosen = plantTypes[Phaser.Math.Between(0, plantTypes.length - 1)];
-  const seedKey = SEED_TYPES[chosen];
-
-  house.request = {
-    plantType: chosen,
-    seedKey,
-    remaining: REQUEST_DURATION, // seconds
-    fulfilled: false
-  };
-  house.requestExpired = false;
-  house.setTint('0x00ff00')
-
-  // create or reuse bubble container
-  if (house.requestBubble) {
-    house.requestBubble.destroy();
-  }
-  const container = scene.add.container(0, 0);
-  container.setDepth(1001); // above world
-  house.requestBubble = container;
-  house.requestBubble.setScrollFactor(0);
-  house.requestBubble.list.forEach(c => c.setScrollFactor(0));
-
-
-  // bubble background
-  const bubble = scene.add.rectangle(0, 0, 160, 60, 0xffffff)
-    .setStrokeStyle(3, 0x000000)
-    .setOrigin(0.5);
-  container.add(bubble);
-
-  // text: seed name + countdown
-  const text = scene.add.text(0, -10, `${chosen} needed`, {
-    fontSize: '14px',
-    fill: '#000',
-    align: 'center',
-    fontStyle: 'bold'
-  }).setOrigin(0.5);
-  container.add(text);
-  const timerText = scene.add.text(0, 12, `10s`, {
-    fontSize: '12px',
-    fill: '#333'
-  }).setOrigin(0.5);
-  container.add(timerText);
-
-  // attach helper refs
-  house.requestBubble.text = text;
-  house.requestBubble.timerText = timerText;
-  house.requestBubble.bubble = bubble;
 }
 
 function maybeSpawnHouseRequests(scene, delta) {
@@ -296,6 +280,78 @@ function maybeSpawnHouseRequests(scene, delta) {
     const pick = Phaser.Utils.Array.GetRandom(candidates);
     startHouseRequest(scene, pick);
   }
+}
+
+function startHouseRequest(scene, house) {
+  // pick a random plant type to request
+  const plantTypes = Object.keys(SEED_TYPES);
+  const chosen = plantTypes[Phaser.Math.Between(0, plantTypes.length - 1)];
+  const seedKey = SEED_TYPES[chosen];
+
+  house.request = {
+    plantType: chosen,
+    seedKey,
+    remaining: REQUEST_DURATION, // seconds
+    fulfilled: false
+  };
+  house.requestExpired = false;
+
+  // ensure any previous bounce is cleaned before starting a new one
+  if (house._bounceTween) {
+    house._bounceTween.stop();
+    house._bounceTween = null;
+  }
+  // call bounce; it will attach its tween to house internally as house._bounceTween
+  bounce(scene, house, {
+    height: 6,
+    squashFactor: 0.9,
+    stretchFactor: 1.1,
+  });
+
+  // create or reuse bubble container
+  if (house.requestBubble) {
+    house.requestBubble.destroy();
+    house.requestBubble = null;
+  }
+  const container = scene.add.container(0, 0);
+  container.setDepth(1001); // above world
+  house.requestBubble = container;
+  house.requestBubble.setScrollFactor(0);
+  house.requestBubble.list?.forEach(c => c.setScrollFactor(0));
+
+  // bubble background
+  const bubble = scene.add.rectangle(0, 0, 120, 60, 0xffffff)
+    .setStrokeStyle(3, 0x000000)
+    .setOrigin(0.5);
+  container.add(bubble);
+
+  // sprite: plant icon (30x30)
+  const icon = scene.add.sprite(-25, -10, seedKey);
+  icon.setDisplaySize(30, 30);
+  icon.setOrigin(0.5);
+  container.add(icon);
+
+  // text: "needed"
+  const neededText = scene.add.text(0, -10, 'needed', {
+    fontSize: '14px',
+    fill: '#000',
+    align: 'left',
+    fontStyle: 'bold'
+  }).setOrigin(0, 0.5);
+  container.add(neededText);
+
+  // countdown timer text below
+  const timerText = scene.add.text(0, 18, `10s`, {
+    fontSize: '12px',
+    fill: '#333'
+  }).setOrigin(0.5);
+  container.add(timerText);
+
+  // attach helper refs
+  house.requestBubble.icon = icon;
+  house.requestBubble.text = neededText;
+  house.requestBubble.timerText = timerText;
+  house.requestBubble.bubble = bubble;
 }
 
 function updateHouseRequests(scene, delta) {
@@ -316,6 +372,7 @@ function updateHouseRequests(scene, delta) {
     house.request.remaining -= delta / 1000;
     if (house.request.remaining <= 0) {
       house.requestExpired = true;
+
       // fade out bubble
       if (house.requestBubble) {
         scene.tweens.add({
@@ -323,11 +380,17 @@ function updateHouseRequests(scene, delta) {
           alpha: 0,
           duration: 400,
           onComplete: () => {
-            if(house.requestBubble.arrow) house.requestBubble.arrow.destroy();
+            if (house.requestBubble?.arrow) house.requestBubble.arrow.destroy();
             house.requestBubble.destroy();
             house.requestBubble = null;
           }
         });
+      }
+
+      // stop bounce tween if any
+      if (house._bounceTween) {
+        house._bounceTween.stop();
+        house._bounceTween = null;
       }
       continue;
     }
@@ -346,34 +409,31 @@ function updateHouseRequests(scene, delta) {
       // on screen: position above
       if (house.requestBubble) house.requestBubble.setPosition(worldX, worldY);
       // remove arrow if any
-      if (house.requestBubble.arrow) {
+      if (house.requestBubble?.arrow) {
         house.requestBubble.arrow.destroy();
         house.requestBubble.arrow = null;
       }
     } else if (house.requestBubble)  {
       // offscreen: clamp bubble to screen edge with direction arrow
-      // compute direction from center of camera to house
       const centerX = cam.worldView.centerX;
       const centerY = cam.worldView.centerY;
       const dirX = house.x - centerX;
       const dirY = house.y - centerY;
       const angle = Math.atan2(dirY, dirX);
 
-      // place bubble along screen edge in that direction
       const margin = 10;
       const edgeX = centerX + Math.cos(angle) * (cam.width / 2 - margin);
       const edgeY = centerY + Math.sin(angle) * (cam.height / 2 - margin);
-      house.requestBubble.setPosition(edgeX + cam.worldView.x - cam.worldView.x, edgeY + cam.worldView.y - cam.worldView.y); // since scrollFactor=0 below
+      house.requestBubble.setPosition(edgeX, edgeY);
 
       // draw/update arrow pointing toward house
       if (!house.requestBubble.arrow) {
-        const arrow = scene.add.triangle(0, 0, 0, 10, 20, 0, 0, -10, 0x000000)
+        const arrow = scene.add.triangle(0, 0, 0, 7, 20, 0, 0, -7, 0x000000)
           .setOrigin(0.5)
           .setDepth(10002);
         arrow.setScrollFactor(0);
         house.requestBubble.arrow = arrow;
       }
-      // position arrow next to bubble and rotate toward house
       house.requestBubble.arrow.setPosition(house.requestBubble.x, house.requestBubble.y);
       house.requestBubble.arrow.setRotation(angle);
     }
@@ -384,9 +444,9 @@ function updateHouseRequests(scene, delta) {
       house.requestBubble.list?.forEach(child => {
         if (child.setScrollFactor) child.setScrollFactor(1);
       });
-    }
-    if (house.requestBubble.arrow) {
-      house.requestBubble.arrow.setScrollFactor(1);
+      if (house.requestBubble.arrow) {
+        house.requestBubble.arrow.setScrollFactor(1);
+      }
     }
   }
 }
@@ -405,6 +465,13 @@ function checkHouseSeedDelivery(scene) {
       if (dist <= DELIVERY_RADIUS) {
         // successful delivery
         house.request.fulfilled = true;
+
+        // stop bounce tween
+        if (house._bounceTween) {
+          house._bounceTween.stop();
+          house._bounceTween = null;
+        }
+
         // reward: e.g., 3 gems
         scene.inventory.gem = (scene.inventory.gem || 0) + 3;
         refreshItemKeys(scene);
@@ -422,17 +489,18 @@ function checkHouseSeedDelivery(scene) {
         });
 
         // cleanup request bubble
-        if (house.requestBubble){
-          if(house.requestBubble.arrow) house.requestBubble.arrow.destroy();
+        if (house.requestBubble) {
+          if (house.requestBubble.arrow) house.requestBubble.arrow.destroy();
           house.requestBubble.destroy();
-        } 
+          house.requestBubble = null;
+        }
+
         // consume seed
         item.destroy();
       }
     });
   }
 }
-
 
 
 let clearingShadow = false;
@@ -503,6 +571,27 @@ function update(time, delta) {
   let bgColor;
 
   if (this.shadowAngle > 0) {
+       if (!this.isDay) {
+        // Switch to day
+        this.isDay = true;
+        this.houseGroup.getChildren().forEach(house => {
+        house.clearTint();
+      });
+
+        // Fade in day track
+        this.tweens.add({
+            targets: this.dayTrack,
+            volume: 1,
+            duration: 2000
+        });
+        // Fade out night track
+        this.tweens.add({
+            targets: this.nightTrack,
+            volume: 0,
+            duration: 2000
+        });
+    }
+
       let t = this.shadowAngle / Math.PI; // normalize [-π, 0] → [0, 1]
 
       if (t < 0.10) {
@@ -537,6 +626,26 @@ function update(time, delta) {
       shadowLength = Phaser.Math.Linear(maxShadowLength, minShadowLength, sunElevation);
   } else {
       // Night time
+      this.houseGroup.getChildren().forEach(house => {
+        house.setTint(0x545476);
+      });
+
+      if (this.isDay || this.isDay === null) {
+        // Switch to night
+        this.isDay = false;
+
+        this.tweens.add({
+            targets: this.nightTrack,
+            volume: 1,
+            duration: 2000
+        });
+        this.tweens.add({
+            targets: this.dayTrack,
+            volume: 0,
+            duration: 2000
+        });
+    }
+
       bgColor = Phaser.Display.Color.HexStringToColor('#223344').color;
       shadowLength = 1.5; // keep long/dark shadow or however you want night to behave
       this.player.setTint('0x545476');
@@ -578,6 +687,7 @@ function update(time, delta) {
   plantManager.updatePlants(delta / 1000, this.dayProgress); // dt in seconds
   updatePlantItemsWithShadows(scene, dayDelta);
 
+    
     // apply effects per entity
     for (let ent of entities) {
       const isPlayer = ent === this.player;
@@ -591,9 +701,9 @@ function update(time, delta) {
 
     // Player-specific UI
     if (!this.player.inShadow) {
-      this.healthText.setText('In sunlight. Health: ' + this.player.health);
+      // this.healthText.setText('In sunlight. Health: ' + this.player.health);
     } else {
-      this.healthText.setText('In shadow. Health: ' + this.player.health);
+      // this.healthText.setText('In shadow. Health: ' + this.player.health);
     }
   } else { // NIGHT
     if (!nightCalled) {
@@ -602,14 +712,14 @@ function update(time, delta) {
     }
     // At night, everything is considered in shadow: reset their flags and skip sun damage
     this.player.inShadow = true;
-    this.player._sunDamageCooldown = 1000;
-    this.healthText.setText('In shadow. Health: ' + this.player.health);
+    // this.player._sunDamageCooldown = 1000;
+    // this.healthText.setText('In shadow. Health: ' + this.player.health);
   }
 
     maybeSpawnHouseRequests(this, delta);
     updateHouseRequests(this, delta);
 
-  wolfManager.update();
+  //wolfManager.update();
 
   ///////// ITEMS DROP AND PICKUP ///////////////////////////
 
@@ -660,12 +770,12 @@ if (Phaser.Input.Keyboard.JustDown(scene.cursors.prev)) {
   if (nearestShop) {
     // yellow border: simple graphics overlay
     if (!scene.shopHighlight) {
-      scene.shopHighlight = scene.add.rectangle(0, 0, nearestShop.displayWidth + 10, nearestShop.displayHeight + 10)
+      scene.shopHighlight = scene.add.rectangle(0, 0, 24, 30)
         .setStrokeStyle(3, 0xffff00)
         .setOrigin(0.5)
         .setDepth(1000);
     }
-    scene.shopHighlight.setPosition(nearestShop.x, nearestShop.y);
+    scene.shopHighlight.setPosition(nearestShop.x, nearestShop.y + 30);
     scene.shopHighlight.setVisible(true);
 
     if (!scene.shopPrompt) {
@@ -709,6 +819,7 @@ if (Phaser.Input.Keyboard.JustDown(scene.cursors.prev)) {
       refreshItemKeys(scene);
       updateInventoryDisplay(scene);
       scene.highlight.setVisible(false);
+      this.pickupSound.play();
     } else { // PLACE DOWN PLANT
       const key = scene.itemKeys[scene.selectedIndex];
 
@@ -717,6 +828,7 @@ if (Phaser.Input.Keyboard.JustDown(scene.cursors.prev)) {
         scene.inventory[key] -= 1;
         refreshItemKeys(scene);
         updateInventoryDisplay(scene);
+        this.placeSound.play();
 
         // If it's a plant type, hook up its logic with labels
         if (plantManager.PlantRules[key]) {
@@ -737,7 +849,7 @@ if (Phaser.Input.Keyboard.JustDown(scene.cursors.prev)) {
               fontSize: '12px', fill: '#88ddff', stroke: '#000', strokeThickness: 3
             }).setOrigin(0.5);
           } else {
-            // cactus or coleus: show accumulated sun
+            // cactus or fern: show accumulated sun
             plantData.labelSun = scene.add.text(placed.x, placed.y - 24, 'Sun:0', {
               fontSize: '12px', fill: '#ffee88', stroke: '#000', strokeThickness: 3
             }).setOrigin(0.5);
@@ -879,15 +991,7 @@ function applySunAndSmokeEffects(scene, ent, delta, isPlayer = false) {
 
   // Tinting or other visual for shadow status
 
-    if (ent.inShadow) {
-      if (ent.clearingShadow){
-        ent.clearingShadow = false;
-        ent.setTint('0x545476');
-      }
-    } else if (!ent.clearingShadow) {
-      ent.clearingShadow = true;
-      ent.clearTint();
-    }
+    setShadowTint(scene, ent);
 
   // Smoke only for player (or extend to others if desired)
   if (ent.itemType === 'bloomroot' && !ent.inShadow && ent._smokeCooldown <= 0) {
@@ -902,9 +1006,21 @@ function applySunAndSmokeEffects(scene, ent, delta, isPlayer = false) {
     ent._smokeCooldown = 300;
   }
 
-  // Cooldown decay
-  if (ent._sunDamageCooldown > 0) ent._sunDamageCooldown -= delta;
-  if (ent._smokeCooldown > 0) ent._smokeCooldown -= delta;
+  // // Cooldown decay
+  // if (ent._sunDamageCooldown > 0) ent._sunDamageCooldown -= delta;
+  // if (ent._smokeCooldown > 0) ent._smokeCooldown -= delta;
+}
+
+function setShadowTint(scene, ent){
+  if (ent.inShadow) {
+      if (ent.clearingShadow){
+        ent.clearingShadow = false;
+        ent.setTint('0x545476');
+      }
+    } else if (!ent.clearingShadow) {
+      ent.clearingShadow = true;
+      ent.clearTint();
+    }
 }
 
 function handleDeath(scene, ent, isPlayer) {
@@ -1014,6 +1130,7 @@ function updatePlantItemsWithShadows(scene, dayDelta) {
       const total = Math.max(1, Math.round(gemCount * multiplier));
       for (let i = 0; i < total; i++) {
           plantManager.spawnSeedAtPlant(scene, sprite.x, sprite.y, data.type);
+          scene.popSound.play();
       }
     }
   }

@@ -1,8 +1,14 @@
 const PlantRequirementText = {
-  cactus: 'Needs full sun to fruit (accumulates over entire day).',
-  bloomroot: 'Wants shade most of the day to fruit.',
-  coleus: 'Needs moderate sun to fruit.',
-  begonia: 'Needs morning sun and evening shade to fruit.'
+  cactus: 'Cactus. Needs full sun to fruit (accumulates over entire day).',
+  bloomroot: 'Bloomroot. Wants shade most of the day to fruit.',
+  fern: 'Fern. Needs moderate sun to fruit.',
+  begonia: 'Begonia. Needs morning sun and evening shade to fruit.',
+  primrose: 'Primrose. Needs morning shade and evening sun to fruit',
+  cactusfruit: 'Cactus fruit.',
+  bloomrootfruit: 'Bloomroot seeds.',
+  begoniafruit: 'Begonia fruit.',
+  fernfruit: 'Fern fruit.',
+  primrose: 'Primrose fruit'
 };
 
 // Renders the full inventory, regenerating entries
@@ -98,6 +104,7 @@ export function createPlacementHint(scene) {
     fontSize: '16px',
     fill: '#000000',
     wordWrap: { width: 480 },
+    fontStyle: 'bold'
   }).setOrigin(0, 0);
   scene.hintContainer.add(scene.hintText);
 }
@@ -116,7 +123,7 @@ export function updatePlacementHint(scene) {
   if (!scene.hintText){
     createPlacementHint(scene);
   }
-  scene.hintText.setText(`${req}  E: place`);
+  scene.hintText.setText(`${req}  E: place down / pick up`);
 }
 
 export function refreshItemKeys(scene) {

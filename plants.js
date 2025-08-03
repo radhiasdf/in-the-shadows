@@ -39,7 +39,7 @@ export const PlantRules = {
       return 0;
     }
   },
- coleus: {
+ fern: {
   baseFruit: 3,
   update(state, inShadow, dt, dayProgress) {
     if (state._wasDay === undefined) state._wasDay = true;
@@ -56,7 +56,7 @@ export const PlantRules = {
     // DEBUG: dump values around transition
     if (justEnteredNight || Math.abs(dayProgress) < 0.05 || Math.abs(dayProgress - 1) < 0.05) {
       console.log({
-        tag: 'coleus-debug',
+        tag: 'fern-debug',
         dayProgress: dayProgress.toFixed(3),
         isDay,
         wasDay: state._wasDay,
@@ -68,7 +68,7 @@ export const PlantRules = {
     let fruit = 0;
     if (justEnteredNight) {
       if ((state.accumulatedSun || 0) > 0 && (state.accumulatedSun || 0) <= 0.5) {
-        console.log('Coleus fruited at beginning of night (partial sun)! accumulatedSun=', state.accumulatedSun);  
+        console.log('fern fruited at beginning of night (partial sun)! accumulatedSun=', state.accumulatedSun);  
         fruit = this.baseFruit;
       }
       state.accumulatedSun = 0;
@@ -114,7 +114,7 @@ export const PlantRules = {
 const PlantUpgrades = {
   cactus: { sunEfficiency: 1.0, gemMultiplier: 1.0 },
   bloomroot: { shadeEfficiency: 1.0, gemMultiplier: 1.0 },
-  coleus: { sunEfficiency: 1.0, gemMultiplier: 1.0 },
+  fern: { sunEfficiency: 1.0, gemMultiplier: 1.0 },
   begonia: { morningBonus: 1.0, eveningBonus: 1.0, gemMultiplier: 1.0 },
 };
 
@@ -147,18 +147,18 @@ const UpgradeCatalog = {
     isPlantPurchase: true,
     plantType: 'bloomroot',
   },
-  buy_coleus: {
-    name: 'Buy Coleus',
+  buy_fern: {
+    name: 'Buy fern',
     appliesTo: [],
     cost: { gem: 2 },
-    description: 'Needs moderate sun (less than cactus) to fruit. Adds one coleus to your inventory.',
+    description: 'Needs moderate sun (less than cactus) to fruit. Adds one fern to your inventory.',
     apply: (upgradeState, scene) => {
-      scene.inventory.coleus = (scene.inventory.coleus || 0) + 1;
+      scene.inventory.fern = (scene.inventory.fern || 0) + 1;
       scene.itemKeys = Object.keys(scene.inventory);
       updateInventoryDisplay(scene);
     },
     isPlantPurchase: true,
-    plantType: 'coleus',
+    plantType: 'fern',
   },
   buy_begonia: {
     name: 'Buy Begonia',
@@ -211,20 +211,20 @@ const UpgradeCatalog = {
       upgradeState.gemMultiplier += 0.4;
     }
   },
-  coleus_sun_efficiency: {
-    name: 'Coleus Sun Efficiency',
-    appliesTo: ['coleus'],
+  fern_sun_efficiency: {
+    name: 'fern Sun Efficiency',
+    appliesTo: ['fern'],
     cost: { gem: 6 },
-    description: 'Coleus accumulates sun faster (needs moderate sun).',
+    description: 'fern accumulates sun faster (needs moderate sun).',
     apply: upgradeState => {
       upgradeState.sunEfficiency += 0.2;
     }
   },
-  coleus_gem_multiplier: {
-    name: 'Coleus Gem Yield',
-    appliesTo: ['coleus'],
+  fern_gem_multiplier: {
+    name: 'fern Gem Yield',
+    appliesTo: ['fern'],
     cost: { gem: 5 },
-    description: 'Coleus gives more gems when it fruits.',
+    description: 'fern gives more gems when it fruits.',
     apply: upgradeState => {
       upgradeState.gemMultiplier += 0.5;
     }
@@ -410,13 +410,13 @@ function attemptCatalogUpgrade(scene, offer) {
     // insufficient feedback
     const warn = scene.add
       .text(scene.cameras.main.centerX, scene.cameras.main.centerY + 160, 'Not enough gems', {
-        fontSize: '16px',
+        fontSize: '40px',
         fill: '#ff4444',
         stroke: '#000',
         strokeThickness: 3,
       })
       .setOrigin(0.5)
-      .setDepth(2200)
+      .setDepth(220000000)
       .setScrollFactor(0);
     scene.time.delayedCall(1000, () => warn.destroy());
     return false;
@@ -505,7 +505,7 @@ function performPurchaseAnimation(scene, offer, cardBg, buyBtn) {
 
 export const PlantToSeed = {
   cactus: 'yellowseed',
-  coleus: 'greenseed',
+  fern: 'greenseed',
   begonia: 'pinkseed',
   bloomroot: 'blueseed'
 };

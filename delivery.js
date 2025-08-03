@@ -1,6 +1,6 @@
 const SEED_TYPES = {
   cactus: 'redseeds',
-  coleus: 'greenseeds',
+  fern: 'greenseeds',
   begonia: 'pinkseeds',
   bloomroot: 'yellowseeds'
 };
