@@ -423,9 +423,10 @@ function attemptCatalogUpgrade(scene, offer) {
   }
 
   // pay
-  scene.inventory.gem -= gemCost;
-  scene.itemKeys = Object.keys(scene.inventory);
-  updateInventoryDisplay(scene);
+  scene.inventory.gem -= cost;
+    refreshItemKeys(scene);
+    updateInventoryDisplay(scene);
+
 
   if (def.isPlantPurchase) {
     // plant purchase uses its own apply with scene context
@@ -499,5 +500,39 @@ function performPurchaseAnimation(scene, offer, cardBg, buyBtn) {
       });
       scene.time.delayedCall(200, () => gemIcon.destroy());
     },
+  });
+}
+
+export const PlantToSeed = {
+  cactus: 'yellowseed',
+  coleus: 'greenseed',
+  begonia: 'pinkseed',
+  bloomroot: 'blueseed'
+};
+
+export function spawnSeedAtPlant(scene, x, y, plantType) {
+  const seedKey = PlantToSeed[plantType];
+  if (!seedKey) return;
+
+  const seed = scene.add.image(
+    x + Phaser.Math.Between(-30, 30),
+    y + Phaser.Math.Between(10, 40),
+    seedKey
+  );
+  seed.setOrigin(0.5);
+  seed.setDisplaySize(18, 18);
+  scene.physics.add.existing(seed);
+  seed.itemType = seedKey; // so pickup logic recognizes
+  seed.autoCollect = true;
+  scene.placedItems.add(seed);
+  seed.setDepth(0);
+  
+  // small pop animation
+  scene.tweens.add({
+    targets: seed,
+    y: seed.y - 8,
+    duration: 300,
+    yoyo: true,
+    ease: 'Sine.easeOut'
   });
 }

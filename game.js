@@ -2,7 +2,7 @@ import {lerpColor} from './lerp.js';
 import { WolfManager } from './wolves.js';
 import { SmokeEffect } from './vaporize.js';
 import {flashRed} from './flashRed.js';
-import { updateInventoryDisplay, placeItem, getNearestItemWithin, refreshSelectionHighlight, createPlacementHint, updatePlacementHint} from './inventory.js';
+import { updateInventoryDisplay, placeItem, getNearestItemWithin, refreshSelectionHighlight, createPlacementHint, updatePlacementHint, refreshItemKeys} from './inventory.js';
 import * as plantManager from './plants.js';
 import { SpatialHash } from './spatialHashShadows.js';
 
@@ -27,6 +27,13 @@ let shadowLength = 1.5; // default long shadow (in case it's night or fallback)
 let daySpeed = 0.0003;
 let nightCalled = false;
 
+const SEED_TYPES = plantManager.PlantToSeed;
+
+// how close to deliver to count
+const DELIVERY_RADIUS = 100;
+// seconds request stays active
+const REQUEST_DURATION = 20;
+
 function preload() {
   this.load.image('vampire1', 'vampire/vampire1.png');
   this.load.image('vampire2', 'vampire/vampire2.png');
@@ -37,6 +44,11 @@ function preload() {
   this.load.image('bloomroot', 'bloomroot.png');
   this.load.image('gem', 'gem.png');
   this.load.image('begonia', 'begonia.webp');
+  this.load.image('greenseed', 'greenseed.webp'); // coleus
+this.load.image('blueseed', 'blueseed.webp');     // cactus
+this.load.image('pinkseed', 'pinkseed.png');   // begonia
+this.load.image('yellowseed', 'yellowseed.webp'); // bloomroot
+
   
 
 }
@@ -99,8 +111,17 @@ function create() {
   houses.length = 0;
   // Generate houses randomly
   for (let i = 0; i < 100; i++) {
-    generateHouse(this);
+    let x = Phaser.Math.Between(-10, 10) * 100;
+  let y = Phaser.Math.Between(-10, 10) * 65;
+    generateHouse(this, x, y);
 }
+  for (let x = -11; x <= 11; x++){
+      for (let y = -11; y <= 11; y++){
+        if(x === -11 || x === 11 || y === -11 | y === 11){
+                  generateHouse(this, x * 100, y * 65);
+        }
+      }
+  }
 
   shadowGraphics = this.add.graphics();
   shadowGraphics.setDepth(-100000000000); // Behind everything
@@ -108,6 +129,7 @@ function create() {
   this.shadowGraphics = shadowGraphics;
   this.shadowAngle = shadowAngle;
   this.houses = houses;
+  this.requestInterval = 10;
   this.cursors = cursors;
   this.dayCount = 1;
   this.daySpeed = daySpeed;
@@ -123,12 +145,18 @@ function create() {
     bloomroot: 2,
     coleus: 2,
     begonia: 2,
+    yellowseed: 2
   };
   scene.inventory.gem = scene.inventory.gem || 0; // collectible from fruiting
+  scene.inventory.gem = scene.inventory.gem || 0;
+scene.inventory.greenseed = scene.inventory.greenseed || 0;
+scene.inventory.blueseed = scene.inventory.blueseed || 0;
+scene.inventory.pinkseed = scene.inventory.pinkseed || 0;
+scene.inventory.yellowseed = scene.inventory.yellowseed || 0;
 
   scene.plantItems = [];
 
-  scene.itemKeys = Object.keys(scene.inventory);
+scene.itemKeys = Object.keys(scene.inventory).filter(k => scene.inventory[k] > 0);
     scene.selectedIndex = 0;
 
 
@@ -157,11 +185,8 @@ function create() {
 
 }
 
-function generateHouse(scene){
-  let x = Phaser.Math.Between(-10, 10) * 100;
-    let y = Phaser.Math.Between(-10, 10) * 70;
-
-
+function generateHouse(scene, x, y){
+  
 
     if ((x > 300 && x < 500) && (y > 200 && y < 400)) return; // no houses render on the players spawn point
 
@@ -180,6 +205,12 @@ function generateHouse(scene){
       house.shop = true;
       house.setTint(0x0000ff);
     }
+
+    house.request = null; // will hold active request
+    house.requestTimer = 0;
+    house.requestBubble = null;
+    house.requestExpired = false;
+
     scene.houseGroup.add(house);
 
     const w = house.displayWidth / 2;
@@ -199,6 +230,210 @@ function generateHouse(scene){
 
     houses.push({ house, polygon });
 }
+
+function startHouseRequest(scene, house) {
+  // pick a random plant type to request
+  const plantTypes = Object.keys(SEED_TYPES);
+  const chosen = plantTypes[Phaser.Math.Between(0, plantTypes.length - 1)];
+  const seedKey = SEED_TYPES[chosen];
+
+  house.request = {
+    plantType: chosen,
+    seedKey,
+    remaining: REQUEST_DURATION, // seconds
+    fulfilled: false
+  };
+  house.requestExpired = false;
+  house.setTint('0x00ff00')
+
+  // create or reuse bubble container
+  if (house.requestBubble) {
+    house.requestBubble.destroy();
+  }
+  const container = scene.add.container(0, 0);
+  container.setDepth(1001); // above world
+  house.requestBubble = container;
+  house.requestBubble.setScrollFactor(0);
+  house.requestBubble.list.forEach(c => c.setScrollFactor(0));
+
+
+  // bubble background
+  const bubble = scene.add.rectangle(0, 0, 160, 60, 0xffffff)
+    .setStrokeStyle(3, 0x000000)
+    .setOrigin(0.5);
+  container.add(bubble);
+
+  // text: seed name + countdown
+  const text = scene.add.text(0, -10, `${chosen} needed`, {
+    fontSize: '14px',
+    fill: '#000',
+    align: 'center',
+    fontStyle: 'bold'
+  }).setOrigin(0.5);
+  container.add(text);
+  const timerText = scene.add.text(0, 12, `10s`, {
+    fontSize: '12px',
+    fill: '#333'
+  }).setOrigin(0.5);
+  container.add(timerText);
+
+  // attach helper refs
+  house.requestBubble.text = text;
+  house.requestBubble.timerText = timerText;
+  house.requestBubble.bubble = bubble;
+}
+
+function maybeSpawnHouseRequests(scene, delta) {
+  scene._requestAccumulator = scene._requestAccumulator || 0;
+  scene._requestAccumulator += delta / 1000;
+  if (scene._requestAccumulator >= scene.requestInterval) {
+    scene._requestAccumulator = 0;
+    // pick a random house that currently has no active request or expired
+    const candidates = scene.houses
+      .map(o => o.house)
+      .filter(h => !h.request || h.requestExpired || h.request.fulfilled);
+    if (candidates.length === 0) return;
+    const pick = Phaser.Utils.Array.GetRandom(candidates);
+    startHouseRequest(scene, pick);
+  }
+}
+
+function updateHouseRequests(scene, delta) {
+  const cam = scene.cameras.main;
+  const camView = new Phaser.Geom.Rectangle(
+    cam.worldView.x,
+    cam.worldView.y,
+    cam.worldView.width,
+    cam.worldView.height
+  );
+
+  for (const obj of scene.houses) {
+    const house = obj.house;
+    if (!house.request || house.request.fulfilled) continue;
+    if (house.requestExpired) continue;
+
+    // decrement timer
+    house.request.remaining -= delta / 1000;
+    if (house.request.remaining <= 0) {
+      house.requestExpired = true;
+      // fade out bubble
+      if (house.requestBubble) {
+        scene.tweens.add({
+          targets: house.requestBubble,
+          alpha: 0,
+          duration: 400,
+          onComplete: () => {
+            if(house.requestBubble.arrow) house.requestBubble.arrow.destroy();
+            house.requestBubble.destroy();
+            house.requestBubble = null;
+          }
+        });
+      }
+      continue;
+    }
+
+    // update timer text
+    if (house.requestBubble) {
+      const secs = Math.ceil(house.request.remaining);
+      house.requestBubble.timerText.setText(`${secs}s`);
+    }
+
+    // position bubble: if on-screen, above house; else clamp to edge with arrow
+    const worldX = house.x;
+    const worldY = house.y - house.displayHeight / 2 - 10;
+
+    if (Phaser.Geom.Rectangle.ContainsPoint(camView, { x: house.x, y: house.y })) {
+      // on screen: position above
+      if (house.requestBubble) house.requestBubble.setPosition(worldX, worldY);
+      // remove arrow if any
+      if (house.requestBubble.arrow) {
+        house.requestBubble.arrow.destroy();
+        house.requestBubble.arrow = null;
+      }
+    } else if (house.requestBubble)  {
+      // offscreen: clamp bubble to screen edge with direction arrow
+      // compute direction from center of camera to house
+      const centerX = cam.worldView.centerX;
+      const centerY = cam.worldView.centerY;
+      const dirX = house.x - centerX;
+      const dirY = house.y - centerY;
+      const angle = Math.atan2(dirY, dirX);
+
+      // place bubble along screen edge in that direction
+      const margin = 10;
+      const edgeX = centerX + Math.cos(angle) * (cam.width / 2 - margin);
+      const edgeY = centerY + Math.sin(angle) * (cam.height / 2 - margin);
+      house.requestBubble.setPosition(edgeX + cam.worldView.x - cam.worldView.x, edgeY + cam.worldView.y - cam.worldView.y); // since scrollFactor=0 below
+
+      // draw/update arrow pointing toward house
+      if (!house.requestBubble.arrow) {
+        const arrow = scene.add.triangle(0, 0, 0, 10, 20, 0, 0, -10, 0x000000)
+          .setOrigin(0.5)
+          .setDepth(10002);
+        arrow.setScrollFactor(0);
+        house.requestBubble.arrow = arrow;
+      }
+      // position arrow next to bubble and rotate toward house
+      house.requestBubble.arrow.setPosition(house.requestBubble.x, house.requestBubble.y);
+      house.requestBubble.arrow.setRotation(angle);
+    }
+
+    // ensure UI is fixed
+    if (house.requestBubble) {
+      house.requestBubble.setScrollFactor(1);
+      house.requestBubble.list?.forEach(child => {
+        if (child.setScrollFactor) child.setScrollFactor(1);
+      });
+    }
+    if (house.requestBubble.arrow) {
+      house.requestBubble.arrow.setScrollFactor(1);
+    }
+  }
+}
+
+function checkHouseSeedDelivery(scene) {
+  for (const obj of scene.houses) {
+    const house = obj.house;
+    if (!house.request || house.request.fulfilled || house.requestExpired) continue;
+    const neededSeed = SEED_TYPES[house.request.plantType];
+    // find nearest placed seed of that type within radius
+    scene.placedItems.getChildren().forEach(item => {
+      if (item.itemType !== neededSeed) return;
+      const dx = item.x - house.x;
+      const dy = item.y - house.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= DELIVERY_RADIUS) {
+        // successful delivery
+        house.request.fulfilled = true;
+        // reward: e.g., 3 gems
+        scene.inventory.gem = (scene.inventory.gem || 0) + 3;
+        refreshItemKeys(scene);
+        updateInventoryDisplay(scene);
+        // visual feedback
+        const pop = scene.add.text(house.x, house.y - 30, '+3💎', {
+          fontSize: '20px', fill: '#ffff66', stroke: '#000', strokeThickness: 4
+        }).setOrigin(0.5).setDepth(1500);
+        scene.tweens.add({
+          targets: pop,
+          y: pop.y - 20,
+          alpha: 0,
+          duration: 1000,
+          onComplete: () => pop.destroy()
+        });
+
+        // cleanup request bubble
+        if (house.requestBubble){
+          if(house.requestBubble.arrow) house.requestBubble.arrow.destroy();
+          house.requestBubble.destroy();
+        } 
+        // consume seed
+        item.destroy();
+      }
+    });
+  }
+}
+
+
 
 let clearingShadow = false;
 
@@ -371,21 +606,29 @@ function update(time, delta) {
     this.healthText.setText('In shadow. Health: ' + this.player.health);
   }
 
+    maybeSpawnHouseRequests(this, delta);
+    updateHouseRequests(this, delta);
+
   wolfManager.update();
 
   ///////// ITEMS DROP AND PICKUP ///////////////////////////
 
-  if (Phaser.Input.Keyboard.JustDown(scene.cursors.next)) {
-    scene.selectedIndex = (scene.selectedIndex + 1) % scene.itemKeys.length;
-    refreshSelectionHighlight(scene);
-    updatePlacementHint(scene);
-  }
-  if (Phaser.Input.Keyboard.JustDown(scene.cursors.prev)) {
-    scene.selectedIndex =
-      (scene.selectedIndex - 1 + scene.itemKeys.length) % scene.itemKeys.length;
-    refreshSelectionHighlight(scene);
-    updatePlacementHint(scene);
-  }
+if (Phaser.Input.Keyboard.JustDown(scene.cursors.next)) {
+  refreshItemKeys(scene);
+  if (scene.itemKeys.length === 0) return;
+  scene.selectedIndex = (scene.selectedIndex + 1) % scene.itemKeys.length;
+  refreshSelectionHighlight(scene);
+  updatePlacementHint(scene);
+}
+if (Phaser.Input.Keyboard.JustDown(scene.cursors.prev)) {
+  refreshItemKeys(scene);
+  if (scene.itemKeys.length === 0) return;
+  scene.selectedIndex =
+    (scene.selectedIndex - 1 + scene.itemKeys.length) % scene.itemKeys.length;
+  refreshSelectionHighlight(scene);
+  updatePlacementHint(scene);
+}
+
 
   // Highlight nearest within pickupRadius
   const nearest = getNearestItemWithin(scene, scene.pickupRadius);
@@ -463,6 +706,7 @@ function update(time, delta) {
       }
 
       nearest.destroy();
+      refreshItemKeys(scene);
       updateInventoryDisplay(scene);
       scene.highlight.setVisible(false);
     } else { // PLACE DOWN PLANT
@@ -471,6 +715,7 @@ function update(time, delta) {
       if (scene.inventory[key] > 0) {
         placeItem(scene, key, scene.player.x, scene.player.y);
         scene.inventory[key] -= 1;
+        refreshItemKeys(scene);
         updateInventoryDisplay(scene);
 
         // If it's a plant type, hook up its logic with labels
@@ -503,30 +748,30 @@ function update(time, delta) {
           spriteDepthSyncLabels(placed, plantData); // helper below
 
         }
+
+        checkHouseSeedDelivery(this);
       }
 
     }
   }
 
-  // Auto-collect gems within small radius (e.g., 30)
-  scene.placedItems.getChildren().forEach(item => {
-    if (item.itemType === 'gem') {
-      const dx = item.x - scene.player.x;
-      const dy = item.y - scene.player.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist < 30) {
-        // collect
-        scene.inventory.gem = (scene.inventory.gem || 0) + 1;
-        scene.itemKeys = Object.keys(scene.inventory);
-        updateInventoryDisplay(scene);
-        // maybe a little pop / sound here
-        item.destroy();
-      }
-    }
-  });
+// Auto-collect autoCollect items (gems, seeds, etc.) within small radius
+scene.placedItems.getChildren().forEach(item => {
+  if (!item.autoCollect) return;
+  const dx = item.x - scene.player.x;
+  const dy = item.y - scene.player.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 30) {
+  const type = item.itemType;
+  if (type) {
+    scene.inventory[type] = (scene.inventory[type] || 0) + 1;
+    refreshItemKeys(scene);
+    updateInventoryDisplay(scene);
+  }
+  item.destroy();
+}
+});
 
-
-  
 }
 
 function cleanupPlantEntry(scene, entry) {
@@ -768,7 +1013,7 @@ function updatePlantItemsWithShadows(scene, dayDelta) {
       const multiplier = upgradeState.gemMultiplier ?? 1;
       const total = Math.max(1, Math.round(gemCount * multiplier));
       for (let i = 0; i < total; i++) {
-        spawnGemAtPlant(scene, sprite.x, sprite.y);
+          plantManager.spawnSeedAtPlant(scene, sprite.x, sprite.y, data.type);
       }
     }
   }
@@ -809,6 +1054,7 @@ function spawnGemAtPlant(scene, x, y) {
   gem.setDisplaySize(18, 18);
   scene.physics.add.existing(gem);
   gem.itemType = 'gem';
+  gem.autoCollect = true;
   gem.setDepth(0);
   scene.placedItems.add(gem);
 

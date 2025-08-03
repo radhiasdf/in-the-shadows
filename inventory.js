@@ -13,7 +13,7 @@ export function updateInventoryDisplay(scene) {
 
   const spacingX = 50;
   scene.itemKeys.forEach((key, idx) => {
-    const group = scene.add.container(idx * spacingX, 530);
+    const group = scene.add.container(idx * spacingX, 490);
 
     // Background box for selection (will be visible only if selected)
     const box = scene.add.rectangle(0, 0, 44, 44);
@@ -28,7 +28,7 @@ export function updateInventoryDisplay(scene) {
     icon.setDisplaySize(36, 36);
 
     // Count text
-    const countText = scene.add.text(32, 32, `${scene.inventory[key]}`, {
+    const countText = scene.add.text(32, 22, `${scene.inventory[key]}`, {
       font: '24px Arial',
       fill: '#ffffff',
       stroke: '#000000',
@@ -84,7 +84,7 @@ export function getNearestItemWithin(scene, radius) {
 // placement hint UI (fixed screen)
 export function createPlacementHint(scene) {
   // container so we can move/update easily
-  scene.hintContainer = scene.add.container(295, 555); // near bottom-left
+  scene.hintContainer = scene.add.container(5, 555); // near bottom-left
   scene.hintContainer.setScrollFactor(0).setDepth(100000000);
 
   // background box (wide)
@@ -117,4 +117,11 @@ export function updatePlacementHint(scene) {
     createPlacementHint(scene);
   }
   scene.hintText.setText(`${req}  E: place`);
+}
+
+export function refreshItemKeys(scene) {
+  scene.itemKeys = Object.keys(scene.inventory).filter(k => scene.inventory[k] > 0);
+  if (scene.selectedIndex >= scene.itemKeys.length) {
+    scene.selectedIndex = Math.max(0, scene.itemKeys.length - 1);
+  }
 }
