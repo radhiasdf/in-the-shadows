@@ -1,5 +1,11 @@
-// Renders the full inventory, regenerating entries
+const PlantRequirementText = {
+  cactus: 'Needs full sun to fruit (accumulates over entire day).',
+  bloomroot: 'Wants shade most of the day to fruit.',
+  coleus: 'Needs moderate sun to fruit.',
+  begonia: 'Needs morning sun and evening shade to fruit.'
+};
 
+// Renders the full inventory, regenerating entries
 export function updateInventoryDisplay(scene) {
   // Clear old entries
   scene.invContainer.removeAll(true);
@@ -39,6 +45,7 @@ export function updateInventoryDisplay(scene) {
   });
 
   refreshSelectionHighlight(scene);
+  updatePlacementHint(scene);
 }
 
 // Updates which inventory entry is highlighted as selected
@@ -72,4 +79,42 @@ export function getNearestItemWithin(scene, radius) {
     }
   });
   return best;
+}
+
+// placement hint UI (fixed screen)
+export function createPlacementHint(scene) {
+  // container so we can move/update easily
+  scene.hintContainer = scene.add.container(295, 555); // near bottom-left
+  scene.hintContainer.setScrollFactor(0).setDepth(100000000);
+
+  // background box (wide)
+  scene.hintBox = scene.add.rectangle(0, 0, 500, 40, 0xffffff)
+    .setOrigin(0, 0)
+    .setStrokeStyle(2, 0x000000);
+  scene.hintContainer.add(scene.hintBox);
+
+  // text
+  scene.hintText = scene.add.text(8, 6, '', {
+    fontSize: '16px',
+    fill: '#000000',
+    wordWrap: { width: 480 },
+  }).setOrigin(0, 0);
+  scene.hintContainer.add(scene.hintText);
+}
+
+export function updatePlacementHint(scene) {
+  const key = scene.itemKeys[scene.selectedIndex];
+  let req = '';
+  if (PlantRequirementText[key]) {
+    req = PlantRequirementText[key];
+  } else if (key === 'gem') {
+    req = 'Gems are currency.';
+  } else {
+    req = 'No special requirements.';
+  }
+
+  if (!scene.hintText){
+    createPlacementHint(scene);
+  }
+  scene.hintText.setText(`${req}  E: place`);
 }

@@ -2,7 +2,10 @@ import {lerpColor} from './lerp.js';
 import { WolfManager } from './wolves.js';
 import { SmokeEffect } from './vaporize.js';
 import {flashRed} from './flashRed.js';
-import { updateInventoryDisplay, placeItem, getNearestItemWithin, refreshSelectionHighlight } from './inventory.js';
+import { updateInventoryDisplay, placeItem, getNearestItemWithin, refreshSelectionHighlight, createPlacementHint, updatePlacementHint} from './inventory.js';
+import * as plantManager from './plants.js';
+import { SpatialHash } from './spatialHashShadows.js';
+
 let wolfManager;
 
 const config = {
@@ -21,7 +24,7 @@ let shadowAngle = 0; // starts dawn (long left)
 let shadow_stretch = 500;
 let shadowLength = 1.5; // default long shadow (in case it's night or fallback)
 
-let daySpeed = 0.0005;
+let daySpeed = 0.0003;
 let nightCalled = false;
 
 function preload() {
@@ -32,6 +35,9 @@ function preload() {
   this.load.image('cactus', 'cactus.png');
   this.load.image('coleus', 'coleus.png');
   this.load.image('bloomroot', 'bloomroot.png');
+  this.load.image('gem', 'gem.png');
+  this.load.image('begonia', 'begonia.webp');
+  
 
 }
 
@@ -46,7 +52,7 @@ function create() {
     { key: 'vampire1' },
     { key: 'vampire2' },
   ],
-  frameRate: 10,
+  frameRate: 4,
   repeat: -1
 });
   player = this.physics.add.sprite(400, 300, 'vampire1');
@@ -58,7 +64,7 @@ function create() {
            .setOffset(0, player.height * 2/3);
 
   // Health and damage stuff
-  player.health = 10;
+  player.health = 1000;
 
   this.healthText = this.add.text(10, 10, 'Health: 0', { fontSize: '20px', fill: '#000' }).setScrollFactor(0).setDepth(100000000);
   this.daysText = this.add.text(650, 10, 'Day: 1', { fontSize: '20px', fill: '#000' }).setScrollFactor(0).setDepth(100000000);
@@ -92,7 +98,7 @@ function create() {
 
   houses.length = 0;
   // Generate houses randomly
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 100; i++) {
     generateHouse(this);
 }
 
@@ -104,6 +110,8 @@ function create() {
   this.houses = houses;
   this.cursors = cursors;
   this.dayCount = 1;
+  this.daySpeed = daySpeed;
+  this.dayProgress = this.dayProgress || 0;
 
 
   this.physics.add.collider(this.player, this.houseGroup);
@@ -111,10 +119,14 @@ function create() {
   // Inventory
 
   scene.inventory = {
-    cactus: 5,
-    bloomroot: 10,
-    coleus: 5
+    cactus: 2,
+    bloomroot: 2,
+    coleus: 2,
+    begonia: 2,
   };
+  scene.inventory.gem = scene.inventory.gem || 0; // collectible from fruiting
+
+  scene.plantItems = [];
 
   scene.itemKeys = Object.keys(scene.inventory);
     scene.selectedIndex = 0;
@@ -132,6 +144,7 @@ function create() {
     stroke: '#000000',
     strokeThickness: 4
   });
+  createPlacementHint(this);
   updateInventoryDisplay(scene);
 
   // Highlight marker (a stroked circle around the closest item)
@@ -142,18 +155,11 @@ function create() {
   // Overlap detection zone (used for proximity, not physics collision)
   scene.pickupRadius = 50;
 
-  // Message for user
-  scene.infoText = scene.add.text(570, 570, 'Q: place object | E: pick up', {
-    font: '16px Arial',
-    fill: '#cccccc',
-    stroke: '#000000'
-  }).setScrollFactor(0).setDepth(100000000);
-
 }
 
 function generateHouse(scene){
-  let x = Phaser.Math.Between(-15, 15) * 100;
-    let y = Phaser.Math.Between(-15, 15) * 70;
+  let x = Phaser.Math.Between(-10, 10) * 100;
+    let y = Phaser.Math.Between(-10, 10) * 70;
 
 
 
@@ -255,6 +261,9 @@ function update(time, delta) {
   if (this.shadowAngle > Math.PI) {
       this.shadowAngle = -Math.PI; // Reset to start
   }
+  
+  const dayDelta = (daySpeed * delta) / Math.PI;
+  scene.dayProgress = this.shadowAngle / Math.PI; // night from -1 to 0, day from 0 to 1.
 
   let bgColor;
 
@@ -315,9 +324,24 @@ function update(time, delta) {
 
     // gather all relevant entities: player + wolves
     const wolfArray = wolfManager.wolves.getChildren(); // array of wolf sprites
-    const entities = [this.player, ...wolfArray];
+    const plantSprites = scene.plantItems.map(p => p.sprite);
 
-    updateShadowsForEntities(this, entities);
+    const entities = [this.player, ...wolfArray, ...plantSprites];
+
+    // In scene
+    if (!scene.entityHash) scene.entityHash = new SpatialHash(64);
+    scene.entityHash.clear();
+    for (let ent of entities) {
+      scene.entityHash.insert(ent);
+    }
+
+    if (this.dayProgress > 0){
+          updateShadowsForEntities(this, entities);
+    }
+
+  // Here you would set plant.inShadow from your shadow logic
+  plantManager.updatePlants(delta / 1000, this.dayProgress); // dt in seconds
+  updatePlantItemsWithShadows(scene, dayDelta);
 
     // apply effects per entity
     for (let ent of entities) {
@@ -338,7 +362,7 @@ function update(time, delta) {
     }
   } else { // NIGHT
     if (!nightCalled) {
-      wolfManager.spawnWolves(10 + 10 * this.dayCount);
+      //wolfManager.spawnWolves(10 + 10 * this.dayCount);
       nightCalled = true;
     }
     // At night, everything is considered in shadow: reset their flags and skip sun damage
@@ -354,21 +378,13 @@ function update(time, delta) {
   if (Phaser.Input.Keyboard.JustDown(scene.cursors.next)) {
     scene.selectedIndex = (scene.selectedIndex + 1) % scene.itemKeys.length;
     refreshSelectionHighlight(scene);
+    updatePlacementHint(scene);
   }
   if (Phaser.Input.Keyboard.JustDown(scene.cursors.prev)) {
     scene.selectedIndex =
       (scene.selectedIndex - 1 + scene.itemKeys.length) % scene.itemKeys.length;
     refreshSelectionHighlight(scene);
-  }
-
-  // Place selected item with Q
-  if (Phaser.Input.Keyboard.JustDown(scene.cursors.q)) {
-    const key = scene.itemKeys[scene.selectedIndex];
-    if (scene.inventory[key] > 0) {
-      placeItem(scene, key, 300, 400);
-      scene.inventory[key] -= 1;
-      updateInventoryDisplay(scene);
-    }
+    updatePlacementHint(scene);
   }
 
   // Highlight nearest within pickupRadius
@@ -380,15 +396,150 @@ function update(time, delta) {
     scene.highlight.setVisible(false);
   }
 
-  // Pick up with E
-  if (Phaser.Input.Keyboard.JustDown(scene.cursors.e) && nearest) {
-    // remove the item
-    nearest.destroy();
-    scene.inventory.cactus += 1;
-    updateInventoryDisplay(scene);
-    scene.highlight.setVisible(false);
+  //////////////////// SHOP PROXIMITY //////////////////
+
+  // Find nearest shop (simple distance check)
+  let nearestShop = null;
+  let shopDist = Infinity;
+  scene.houseGroup.getChildren().forEach(house => {
+    if (house.shop) {
+      const dx = house.x - scene.player.x;
+      const dy = house.y - scene.player.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 100 && d < shopDist) {
+        shopDist = d;
+        nearestShop = house;
+      }
+    }
+  });
+
+  // Highlight shop and show prompt if in range
+  if (nearestShop) {
+    // yellow border: simple graphics overlay
+    if (!scene.shopHighlight) {
+      scene.shopHighlight = scene.add.rectangle(0, 0, nearestShop.displayWidth + 10, nearestShop.displayHeight + 10)
+        .setStrokeStyle(3, 0xffff00)
+        .setOrigin(0.5)
+        .setDepth(1000);
+    }
+    scene.shopHighlight.setPosition(nearestShop.x, nearestShop.y);
+    scene.shopHighlight.setVisible(true);
+
+    if (!scene.shopPrompt) {
+      scene.shopPrompt = scene.add.text(nearestShop.x, nearestShop.y - nearestShop.displayHeight / 2 - 20, 'E', {
+        fontSize: '28px', fill: '#ffff00', fontStyle: 'bold', stroke: '#000', strokeThickness: 4
+      }).setOrigin(0.5).setDepth(1000);
+    } else {
+      scene.shopPrompt.setPosition(nearestShop.x, nearestShop.y - nearestShop.displayHeight / 2 - 20);
+      scene.shopPrompt.setVisible(true);
+    }
+  } else {
+    if (scene.shopHighlight) scene.shopHighlight.setVisible(false);
+    if (scene.shopPrompt) scene.shopPrompt.setVisible(false);
   }
+
+  ///////////////////// CHECK E AFTER HIGHLIGHT
+
+  // Pick up or place with E
+  if (Phaser.Input.Keyboard.JustDown(scene.cursors.e)) {
+    if (nearestShop && !scene.upgradeMenuOpen){
+      plantManager.openUpgradeMenu(scene, nearestShop);
+    }
+    else if (nearest) { // PICK UP PLANT
+
+      // Safely get its type and increment inventory
+      const type = nearest.itemType;
+      if (type && scene.inventory.hasOwnProperty(type)) {
+        scene.inventory[type] += 1;
+      } else {
+        // fallback in case something weird happened
+        console.warn('Picked up item with unknown type:', type);
+      }
+
+      // If it's a plant, find and clean up its labels/state
+      const plantEntry = scene.plantItems.find(p => p.sprite === nearest);
+      if (plantEntry) {
+        cleanupPlantEntry(scene, plantEntry);
+      }
+
+      nearest.destroy();
+      updateInventoryDisplay(scene);
+      scene.highlight.setVisible(false);
+    } else { // PLACE DOWN PLANT
+      const key = scene.itemKeys[scene.selectedIndex];
+
+      if (scene.inventory[key] > 0) {
+        placeItem(scene, key, scene.player.x, scene.player.y);
+        scene.inventory[key] -= 1;
+        updateInventoryDisplay(scene);
+
+        // If it's a plant type, hook up its logic with labels
+        if (plantManager.PlantRules[key]) {
+          const placed = scene.placedItems.getChildren().slice(-1)[0];
+          const plantData = plantManager.makePlant(key, placed.x, placed.y);
+
+          // Create floating text(s) above the plant
+          // We'll store label objects inside data for updates.
+          if (key === 'begonia') {
+            plantData.labelMorning = scene.add.text(placed.x, placed.y - 30, 'M:0', {
+              fontSize: '12px', fill: '#ffffaa', stroke: '#000', strokeThickness: 3
+            }).setOrigin(0.5);
+            plantData.labelEvening = scene.add.text(placed.x, placed.y - 18, 'E:0', {
+              fontSize: '12px', fill: '#aaaaff', stroke: '#000', strokeThickness: 3
+            }).setOrigin(0.5);
+          } else if (key === 'bloomroot') {
+            plantData.labelShade = scene.add.text(placed.x, placed.y - 24, 'Shade:0', {
+              fontSize: '12px', fill: '#88ddff', stroke: '#000', strokeThickness: 3
+            }).setOrigin(0.5);
+          } else {
+            // cactus or coleus: show accumulated sun
+            plantData.labelSun = scene.add.text(placed.x, placed.y - 24, 'Sun:0', {
+              fontSize: '12px', fill: '#ffee88', stroke: '#000', strokeThickness: 3
+            }).setOrigin(0.5);
+          }
+
+          scene.plantItems.push({ sprite: placed, data: plantData });
+
+          spriteDepthSyncLabels(placed, plantData); // helper below
+
+        }
+      }
+
+    }
+  }
+
+  // Auto-collect gems within small radius (e.g., 30)
+  scene.placedItems.getChildren().forEach(item => {
+    if (item.itemType === 'gem') {
+      const dx = item.x - scene.player.x;
+      const dy = item.y - scene.player.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 30) {
+        // collect
+        scene.inventory.gem = (scene.inventory.gem || 0) + 1;
+        scene.itemKeys = Object.keys(scene.inventory);
+        updateInventoryDisplay(scene);
+        // maybe a little pop / sound here
+        item.destroy();
+      }
+    }
+  });
+
+
+  
 }
+
+function cleanupPlantEntry(scene, entry) {
+  const { sprite, data } = entry;
+  // destroy labels if they exist
+  if (data.labelSun) data.labelSun.destroy();
+  if (data.labelShade) data.labelShade.destroy();
+  if (data.labelMorning) data.labelMorning.destroy();
+  if (data.labelEvening) data.labelEvening.destroy();
+  // remove from plantItems array
+  scene.plantItems = scene.plantItems.filter(p => p !== entry);
+}
+
 
 function updateShadowsForEntities(scene, entities) {
   scene.shadowGraphics.clear();
@@ -436,7 +587,7 @@ function updateShadowsForEntities(scene, entities) {
       scene.shadowGraphics.closePath();
       scene.shadowGraphics.fillPath();
 
-      // Prepare polygon and bounds once
+      // Prepare polygon
       const pts = [
         quadPoints[0].x, quadPoints[0].y,
         quadPoints[1].x, quadPoints[1].y,
@@ -444,17 +595,19 @@ function updateShadowsForEntities(scene, entities) {
         quadPoints[3].x, quadPoints[3].y,
       ];
       const poly = new Phaser.Geom.Polygon(pts);
-      //const bounds = Phaser.Geom.Polygon.GetBounds(poly);
 
-      for (let ent of entities) {
+      // Get bounding box of quad
+      const minX = Math.min(...quadPoints.map(p => p.x));
+      const minY = Math.min(...quadPoints.map(p => p.y));
+      const maxX = Math.max(...quadPoints.map(p => p.x));
+      const maxY = Math.max(...quadPoints.map(p => p.y));
+
+      // Query only entities in this bounding rect
+      const candidates = scene.entityHash.queryAreaRect(minX, minY, maxX, maxY);
+
+      for (let ent of candidates) {
         if (ent.inShadow) continue; // already shadowed
-
-        const px = ent.x;
-        const py = ent.y;
-
-        //if (!Phaser.Geom.Rectangle.Contains(bounds, px, py)) continue; // fast reject
-
-        if (Phaser.Geom.Polygon.Contains(poly, px, py)) {
+        if (Phaser.Geom.Polygon.Contains(poly, ent.x, ent.y)) {
           ent.inShadow = true;
         }
       }
@@ -462,35 +615,37 @@ function updateShadowsForEntities(scene, entities) {
   }
 }
 
+
 function applySunAndSmokeEffects(scene, ent, delta, isPlayer = false) {
   // initialize cooldowns if missing
   ent._sunDamageCooldown = ent._sunDamageCooldown ?? 0;
   ent._smokeCooldown = ent._smokeCooldown ?? 0;
 
-  if (!ent.inShadow) {
-    if (ent._sunDamageCooldown <= 0) {
-      ent.health -= 1;
-        flashRed(ent, scene, 500);
-        ent._smokeCooldown = 0; // optional for player
-      ent._sunDamageCooldown = 500; // ms
-    }
-  } else {
-    ent._sunDamageCooldown = 500; // reset while safe
-  }
+  // if (!ent.inShadow) {
+  //   if (ent._sunDamageCooldown <= 0) {
+  //     ent.health -= 1;
+  //       flashRed(ent, scene, 500);
+  //       ent._smokeCooldown = 0; // optional for player
+  //     ent._sunDamageCooldown = 500; // ms
+  //   }
+  // } else {
+  //   ent._sunDamageCooldown = 500; // reset while safe
+  // }
 
   // Tinting or other visual for shadow status
-  if (isPlayer) {
+
     if (ent.inShadow) {
-      if (clearingShadow) clearingShadow = false;
-      scene.player.setTint('0x545476');
-    } else if (!clearingShadow) {
-      clearingShadow = true;
-      scene.player.clearTint();
+      if (ent.clearingShadow){
+        ent.clearingShadow = false;
+        ent.setTint('0x545476');
+      }
+    } else if (!ent.clearingShadow) {
+      ent.clearingShadow = true;
+      ent.clearTint();
     }
-  }
 
   // Smoke only for player (or extend to others if desired)
-  if (!ent.inShadow && ent._smokeCooldown <= 0) {
+  if (ent.itemType === 'bloomroot' && !ent.inShadow && ent._smokeCooldown <= 0) {
     scene.smoke.emit(ent.x, ent.y - 10, {
       width: 30,
       height: 40,
@@ -580,3 +735,89 @@ function showYouDiedScreen(scene) {
     });
 }
 
+function updatePlantItemsWithShadows(scene, dayDelta) {
+
+
+  // // Cleanup any dead plant items (optional)
+  scene.plantItems = scene.plantItems.filter(p => p.sprite.active);
+
+  // Process each plant: sync shadow, update labels, detect fruiting
+  for (let entry of scene.plantItems) {
+    const { sprite, data } = entry;
+    data.inShadow = !!sprite.inShadow;
+
+    const rule = plantManager.PlantRules[data.type];
+    if (!rule) continue;
+
+    // Before calling update, capture pre-state to detect fruiting
+    const prev = {
+      accumulatedSun: data.state.accumulatedSun,
+      shadeAccumulated: data.state.shadeAccumulated,
+      morningSun: data.state.morningSun,
+      eveningShade: data.state.eveningShade
+    };
+
+    // Update floating labels position & text
+    spriteDepthSyncLabels(sprite, data); // helper below
+
+    let gemCount = rule.update(data.state, data.inShadow, dayDelta, scene.dayProgress);
+
+    if (gemCount > 0) {
+      // apply upgrade multiplier if any
+      const upgradeState = plantManager.PlantUpgrades?.[data.type] || {};
+      const multiplier = upgradeState.gemMultiplier ?? 1;
+      const total = Math.max(1, Math.round(gemCount * multiplier));
+      for (let i = 0; i < total; i++) {
+        spawnGemAtPlant(scene, sprite.x, sprite.y);
+      }
+    }
+  }
+}
+
+function spriteDepthSyncLabels(sprite, data) {
+  // compute same base depth as you do elsewhere
+  const baseDepth = sprite.y + (sprite.displayHeight || 0) / 2;
+  sprite.setDepth(baseDepth);
+
+  // Move & update labels
+  if (data.labelSun) {
+    data.labelSun.setPosition(sprite.x, sprite.y - 24);
+    data.labelSun.setText('Sun:' + data.state.accumulatedSun.toFixed(1));
+    data.labelSun.setDepth(baseDepth + 1); // ensure above the plant/house
+  }
+  if (data.labelShade) {
+    data.labelShade.setPosition(sprite.x, sprite.y - 24);
+    data.labelShade.setText('Shade:' + data.state.shadeAccumulated.toFixed(1));
+    data.labelShade.setDepth(baseDepth + 1);
+  }
+  if (data.labelMorning) {
+    data.labelMorning.setPosition(sprite.x, sprite.y - 30);
+    data.labelMorning.setText('M:' + data.state.morningSun.toFixed(1));
+    data.labelMorning.setDepth(baseDepth + 1);
+  }
+  if (data.labelEvening) {
+    data.labelEvening.setPosition(sprite.x, sprite.y - 18);
+    data.labelEvening.setText('E:' + data.state.eveningShade.toFixed(1));
+    data.labelEvening.setDepth(baseDepth + 1);
+  }
+}
+
+function spawnGemAtPlant(scene, x, y) {
+  // Avoid spawning duplicates if one already exists very close? (optional)
+  const gem = scene.add.image(x + Phaser.Math.Between(-30, 30), y + Phaser.Math.Between(10, 40), 'gem');
+  gem.setOrigin(0.5);
+  gem.setDisplaySize(18, 18);
+  scene.physics.add.existing(gem);
+  gem.itemType = 'gem';
+  gem.setDepth(0);
+  scene.placedItems.add(gem);
+
+  // Optional: small pop animation
+  scene.tweens.add({
+    targets: gem,
+    y: gem.y - 8,
+    duration: 300,
+    yoyo: true,
+    ease: 'Sine.easeOut'
+  });
+}

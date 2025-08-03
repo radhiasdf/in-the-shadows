@@ -6,7 +6,7 @@ export class WolfManager {
     this.scene.physics.add.collider(player, this.wolves, (player, wolf) => {
       if (!player.damaged) {
         player.damaged = true;
-        player.health =- 1;
+        //player.health =- 1;
         console.log("Player hit by enemy!");
       }
     });
